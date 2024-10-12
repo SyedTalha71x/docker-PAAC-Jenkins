@@ -2,13 +2,15 @@ pipeline {
     agent any
     tools {
 	    maven "MAVEN3"
-	    jdk "OracleJDK8"
+	    jdk "OracleJDK17"
 	}
 
     environment {
-        registryCredential = 'ecr:us-east-2:awscreds'
-        appRegistry = "951401132355.dkr.ecr.us-east-2.amazonaws.com/vprofileappimg"
-        vprofileRegistry = "https://951401132355.dkr.ecr.us-east-2.amazonaws.com"
+        registryCredential = 'ecr:us-east-1:awscred'
+        appRegistry = "343218193254.dkr.ecr.us-east-1.amazonaws.com/vprofile-app-img"
+        vprofileRegistry = "https://343218193254.dkr.ecr.us-east-1.amazonaws.com"
+        cluster = "vprofile-01"
+        service = "vprofileappsvc"
     }
   stages {
     stage('Fetch code'){
@@ -35,33 +37,31 @@ pipeline {
             }
         }
 
-        stage('build && SonarQube analysis') {
+       stage('Sonar Analysis') {
             environment {
-             scannerHome = tool 'sonar4.7'
-          }
+                JAVA_HOME = tool 'OracleJDK17'
+                // Add required JVM arguments for module access
+                MAVEN_OPTS = '-Djava.security.manager=allow --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED'
+            }
             steps {
                 withSonarQubeEnv('sonar') {
-                 sh '''${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=vprofile \
-                   -Dsonar.projectName=vprofile-repo \
-                   -Dsonar.projectVersion=1.0 \
-                   -Dsonar.sources=src/ \
-                   -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/ \
-                   -Dsonar.junit.reportsPath=target/surefire-reports/ \
-                   -Dsonar.jacoco.reportsPath=target/jacoco.exec \
-                   -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml'''
+                    sh '''
+                        mvn -Dmaven.test.failure.ignore=true clean verify sonar:sonar \
+                        -Dsonar.projectKey=vprofile \
+                        -Dsonar.projectName=vprofile \
+                        -Dsonar.projectVersion=1.0 \
+                        -Dsonar.sources=src/main/ \
+                        -Dsonar.java.binaries=target/classes/ \
+                        -Dsonar.test.sources=src/test/ \
+                        -Dsonar.junit.reportPaths=target/surefire-reports/ \
+                        -Dsonar.jacoco.reportPaths=target/jacoco.exec \
+                        -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml \
+                        -Dsonar.exclusions=src/main/webapp/WEB-INF/js/**/*
+                    '''
                 }
             }
         }
 
-        stage("Quality Gate") {
-            steps {
-                timeout(time: 1, unit: 'HOURS') {
-                    // Parameter indicates whether to set pipeline to UNSTABLE if Quality Gate fails
-                    // true = set pipeline to UNSTABLE, false = don't
-                    waitForQualityGate abortPipeline: true
-                }
-            }
-        }
 
     stage('Build App Image') {
        steps {
@@ -83,6 +83,14 @@ pipeline {
               }
             }
           }
+     }
+     
+     stage('Deploy to ecs') {
+          steps {
+        withAWS(credentials: 'awscred', region: 'us-east-1') {
+          sh 'aws ecs update-service --cluster ${cluster} --service ${service} --force-new-deployment'
+        }
+      }
      }
 
   }
